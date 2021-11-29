@@ -37,7 +37,7 @@ Icon
 Network Trash Folder
 Temporary Items
 .apdisk
-
+**/cmake-build-debug
 .metadata
 bin/
 tmp/

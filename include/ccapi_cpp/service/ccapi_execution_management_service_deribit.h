@@ -23,6 +23,7 @@ class ExecutionManagementServiceDeribit : public ExecutionManagementService {
     this->setupCredential({this->clientIdName, this->clientSecretName});
     this->restTarget = "/api/v2";
     this->createOrderBuyTarget = "/private/buy";
+    this->editOrderTarget = "/private/edit";
     this->createOrderSellTarget = "/private/sell";
     this->cancelOrderTarget = "/private/cancel";
     this->getOrderTarget = "/private/get_order_state";
@@ -178,6 +179,16 @@ class ExecutionManagementServiceDeribit : public ExecutionManagementService {
                          {
                              {CCAPI_EM_ORDER_QUANTITY, "amount"},
                              {CCAPI_EM_ORDER_LIMIT_PRICE, "price"},
+                         });
+      } break;
+      case Request::Operation::EDIT_ORDER: {
+        const std::map<std::string, std::string> param = request.getFirstParamWithDefault();
+        std::string jsonrpcMethod = this->editOrderTarget;
+        this->prepareReq(req, param, now, symbolId, credential, jsonrpcMethod,
+                         {
+                             {CCAPI_EM_ORDER_QUANTITY, "amount"},
+                             {CCAPI_EM_ORDER_LIMIT_PRICE, "price"},
+                             {CCAPI_EM_ORDER_ID, "order_id"},
                          });
       } break;
       case Request::Operation::CANCEL_ORDER: {
@@ -446,7 +457,7 @@ class ExecutionManagementServiceDeribit : public ExecutionManagementService {
             } else if (field == CCAPI_EM_ORDER_UPDATE && fieldSet.find(CCAPI_EM_ORDER_UPDATE) != fieldSet.end()) {
               message.setType(Message::Type::EXECUTION_MANAGEMENT_EVENTS_ORDER_UPDATE);
               const std::map<std::string, std::pair<std::string, JsonDataType>>& extractionFieldNameMap = {
-                  {CCAPI_EM_ORDER_ID, std::make_pair("price", JsonDataType::STRING)},
+                  {CCAPI_EM_ORDER_ID, std::make_pair("order_id", JsonDataType::STRING)},
                   {CCAPI_EM_ORDER_SIDE, std::make_pair("direction", JsonDataType::STRING)},
                   {CCAPI_EM_ORDER_LIMIT_PRICE, std::make_pair("price", JsonDataType::STRING)},
                   {CCAPI_EM_ORDER_QUANTITY, std::make_pair("amount", JsonDataType::STRING)},
@@ -506,6 +517,7 @@ class ExecutionManagementServiceDeribit : public ExecutionManagementService {
   std::string clientIdName;
   std::string clientSecretName;
   std::string createOrderBuyTarget;
+  std::string editOrderTarget;
   std::string createOrderSellTarget;
 };
 } /* namespace ccapi */

@@ -28,6 +28,7 @@ class Request CCAPI_FINAL {
     GET_INSTRUMENT,
     GET_INSTRUMENTS,
     CREATE_ORDER = operationTypeExecutionManagementOrder,
+    EDIT_ORDER,
     CANCEL_ORDER,
     GET_ORDER,
     GET_OPEN_ORDERS,

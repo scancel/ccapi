@@ -293,17 +293,19 @@ class EventHandlerBase : public EventHandler {
               }
             }
           }
-          int intervalStart = UtilTime::getUnixTimestamp(messageTime) / this->adverseSelectionGuardMarketDataSampleIntervalSeconds *
-                              this->adverseSelectionGuardMarketDataSampleIntervalSeconds;
-          for (auto& kv : this->publicTradeMap) {
-            kv.second.erase(kv.second.begin(), kv.second.upper_bound(intervalStart - this->adverseSelectionGuardMarketDataSampleBufferSizeSeconds));
-          }
-          const auto& elementList = message.getElementList();
-          auto rit = elementList.rbegin();
-          if (rit != elementList.rend()) {
+          if (this->enableAdverseSelectionGuard) {
+            int intervalStart = UtilTime::getUnixTimestamp(messageTime) / this->adverseSelectionGuardMarketDataSampleIntervalSeconds *
+                                this->adverseSelectionGuardMarketDataSampleIntervalSeconds;
+            for (auto& kv : this->publicTradeMap) {
+              kv.second.erase(kv.second.begin(), kv.second.upper_bound(intervalStart - this->adverseSelectionGuardMarketDataSampleBufferSizeSeconds));
+            }
+            const auto& elementList = message.getElementList();
+            auto rit = elementList.rbegin();
+            if (rit != elementList.rend()) {
 #if APP_PUBLIC_TRADE_LAST != -1
-            this->publicTradeMap[APP_PUBLIC_TRADE_LAST][intervalStart] = std::stod(rit->getValue(CCAPI_LAST_PRICE));
+              this->publicTradeMap[APP_PUBLIC_TRADE_LAST][intervalStart] = std::stod(rit->getValue(CCAPI_LAST_PRICE));
 #endif
+            }
           }
         }
       }
@@ -360,6 +362,31 @@ class EventHandlerBase : public EventHandler {
             }
           } else {
             this->midPrice = 0;
+          }
+        }
+        if (this->tradingMode == TradingMode::PAPER || this->tradingMode == TradingMode::BACKTEST) {
+          bool buySideCrossed = !this->bestAskPrice.empty() && this->openBuyOrder && Decimal(this->bestAskPrice) <= this->openBuyOrder.get().limitPrice;
+          bool sellSideCrossed = !this->bestBidPrice.empty() && this->openSellOrder && Decimal(this->bestBidPrice) >= this->openSellOrder.get().limitPrice;
+          if (buySideCrossed || sellSideCrossed) {
+            Event virtualEvent;
+            virtualEvent.setType(Event::Type::SUBSCRIPTION_DATA);
+            Message message;
+            message.setType(exchange.rfind("binance", 0) == 0 ? Message::Type::MARKET_DATA_EVENTS_AGG_TRADE : Message::Type::MARKET_DATA_EVENTS_TRADE);
+            message.setRecapType(Message::RecapType::NONE);
+            message.setTime(messageTime);
+            message.setTimeReceived(messageTime);
+            message.setCorrelationIdList({PUBLIC_SUBSCRIPTION_DATA_TRADE_CORRELATION_ID});
+            std::vector<Element> elementList;
+            Element element;
+            const Order& order = buySideCrossed ? this->openBuyOrder.get() : this->openSellOrder.get();
+            element.insert(CCAPI_LAST_PRICE, order.limitPrice.toString());
+            element.insert(CCAPI_LAST_SIZE, order.remainingQuantity.toString());
+            element.insert(CCAPI_IS_BUYER_MAKER, buySideCrossed ? "1" : "0");
+            elementList.emplace_back(std::move(element));
+            message.setElementList(elementList);
+            virtualEvent.addMessage(message);
+            APP_LOGGER_DEBUG("Generated a virtual event: " + virtualEvent.toStringPretty());
+            this->processEvent(virtualEvent, session);
           }
         }
         const std::string& messageTimeISO = UtilTime::getISOTimestamp(messageTime);
@@ -487,7 +514,7 @@ class EventHandlerBase : public EventHandler {
       const auto& messageTimeReceivedISO = UtilTime::getISOTimestamp(messageTimeReceived);
       if (firstMessage.getType() == Message::Type::RESPONSE_ERROR) {
         for (const auto& element : firstMessage.getElementList()) {
-          APP_LOGGER_INFO("Received an error: " + element.getValue(CCAPI_ERROR_MESSAGE) + ".");
+          APP_LOGGER_ERROR("Received an error: " + element.getValue(CCAPI_ERROR_MESSAGE) + ".");
         }
       }
       if (std::find(correlationIdList.begin(), correlationIdList.end(), this->getAccountBalancesRequestCorrelationId) != correlationIdList.end()) {
@@ -1283,42 +1310,49 @@ class EventHandlerBase : public EventHandler {
       }
     }
   }
-  virtual std::string createClientOrderId(const std::string& exchange, const std::string& instrument, const std::string& side, const std::string& price,
-                                          const std::string& quantity, const TimePoint& now) {
-    std::string clientOrderId;
-    if (this->tradingMode == TradingMode::BACKTEST) {
-      clientOrderId += UtilTime::getISOTimestamp<std::chrono::seconds>(std::chrono::time_point_cast<std::chrono::seconds>(now));
-      clientOrderId += "_";
-      clientOrderId += side;
-    } else {
-      if (exchange == "coinbase") {
-        clientOrderId = AppUtil::generateUuidV4();
-      } else if (exchange == "kraken") {
-        clientOrderId = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count());
-      } else if (exchange == "gateio") {
-        clientOrderId = "t-" + std::to_string(std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count());
-      } else {
-        clientOrderId += instrument;
-        clientOrderId += "_";
-        clientOrderId += UtilTime::getISOTimestamp<std::chrono::seconds>(std::chrono::time_point_cast<std::chrono::seconds>(now));
-        clientOrderId += "_";
-        clientOrderId += side;
-        clientOrderId += "_";
-        clientOrderId += price;
-        clientOrderId += "_";
-        clientOrderId += quantity;
-      }
-    }
-    return clientOrderId;
-  }
+  // virtual std::string createClientOrderId(const std::string& exchange, const std::string& instrument, const std::string& side, const std::string& price,
+  //                                         const std::string& quantity, const TimePoint& now) {
+  //   std::string clientOrderId;
+  //   if (this->tradingMode == TradingMode::BACKTEST || this->tradingMode == TradingMode::PAPER) {
+  //     clientOrderId += UtilTime::getISOTimestamp<std::chrono::milliseconds>(std::chrono::time_point_cast<std::chrono::milliseconds>(now));
+  //     clientOrderId += "_";
+  //     clientOrderId += side;
+  //   } else {
+  //     if (exchange == "coinbase") {
+  //       clientOrderId = AppUtil::generateUuidV4();
+  //     } else if (exchange.rfind("binance", 0) == 0 || exchange == "kraken") {
+  //       clientOrderId = std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
+  //     } else if (exchange == "gateio") {
+  //       clientOrderId = "t-" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
+  //     } else {
+  //       clientOrderId += instrument;
+  //       clientOrderId += "_";
+  //       clientOrderId += UtilTime::getISOTimestamp<std::chrono::milliseconds>(std::chrono::time_point_cast<std::chrono::milliseconds>(now));
+  //       clientOrderId += "_";
+  //       clientOrderId += side;
+  //       clientOrderId += "_";
+  //       clientOrderId += price;
+  //       clientOrderId += "_";
+  //       clientOrderId += quantity;
+  //     }
+  //   }
+  //   return clientOrderId;
+  // }
   virtual Request createRequestForCreateOrder(const std::string& side, const std::string& price, const std::string& quantity, const TimePoint& now) {
     Request request(Request::Operation::CREATE_ORDER, this->exchange, this->instrumentRest);
-    request.appendParam({
+    std::map<std::string, std::string> param = {
         {CCAPI_EM_ORDER_SIDE, side},
         {CCAPI_EM_ORDER_QUANTITY, quantity},
         {CCAPI_EM_ORDER_LIMIT_PRICE, price},
-        {CCAPI_EM_CLIENT_ORDER_ID, this->createClientOrderId(this->exchange, this->instrumentRest, side, price, quantity, now)},
-    });
+    };
+    if (this->tradingMode == TradingMode::BACKTEST || this->tradingMode == TradingMode::PAPER) {
+      std::string clientOrderId;
+      clientOrderId += UtilTime::getISOTimestamp<std::chrono::milliseconds>(std::chrono::time_point_cast<std::chrono::milliseconds>(now));
+      clientOrderId += "_";
+      clientOrderId += side;
+      param.insert({CCAPI_EM_CLIENT_ORDER_ID, clientOrderId});
+    }
+    request.appendParam(param);
     request.setTimeSent(now);
     APP_LOGGER_INFO("Place order - side: " + side + ", price: " + price + ", quantity: " + quantity + ".");
     return request;

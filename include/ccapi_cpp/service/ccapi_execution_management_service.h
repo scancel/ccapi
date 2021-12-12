@@ -28,6 +28,7 @@ class ExecutionManagementService : public Service {
       : Service(eventHandler, sessionOptions, sessionConfigs, serviceContextPtr) {
     this->requestOperationToMessageTypeMap = {
         {Request::Operation::CREATE_ORDER, Message::Type::CREATE_ORDER},
+        {Request::Operation::EDIT_ORDER, Message::Type::EDIT_ORDER},
         {Request::Operation::CANCEL_ORDER, Message::Type::CANCEL_ORDER},
         {Request::Operation::GET_ORDER, Message::Type::GET_ORDER},
         {Request::Operation::GET_OPEN_ORDERS, Message::Type::GET_OPEN_ORDERS},
